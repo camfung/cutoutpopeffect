@@ -160,7 +160,23 @@ input[type=color] {
 
   <fieldset>
     <legend>Image</legend>
-    <input type="file" id="file" accept="image/png,image/webp,image/gif">
+    <input type="file" id="file" accept="image/*">
+    <div class="checkline">
+      <input type="checkbox" id="autoRemove" checked>
+      <span>auto remove background (opaque images)</span>
+    </div>
+    <label>Removal model</label>
+    <select id="rbModel">
+      <option value="bria-rmbg">bria-rmbg (default)</option>
+      <option value="birefnet-general">birefnet-general</option>
+      <option value="birefnet-portrait">birefnet-portrait</option>
+      <option value="isnet-general-use">isnet-general-use</option>
+      <option value="isnet-anime">isnet-anime</option>
+      <option value="u2net">u2net</option>
+    </select>
+    <div style="margin-top:8px">
+      <button id="removeBgBtn" disabled>remove background</button>
+    </div>
   </fieldset>
 
   <fieldset>
@@ -239,7 +255,7 @@ input[type=color] {
 </div>
 
 <div id="main">
-  <div id="drop">drop a transparent PNG here<br><br>(or paste from clipboard, or use the file picker)</div>
+  <div id="drop">drop any image here — opaque backgrounds are removed for you<br><br>(or paste from clipboard, or use the file picker)</div>
   <div id="canvasWrap" class="hidden"><canvas id="out"></canvas></div>
   <div id="status"></div>
 </div>
@@ -250,6 +266,7 @@ input[type=color] {
 // ---------- state ----------
 const state = {
   img: null,          // HTMLImageElement
+  origBlob: null,     // last loaded file, for (re)running background removal
   w: 0, h: 0,         // working size (image + max outline padding)
   pad: 0,
   algo: 'edt',
@@ -287,19 +304,81 @@ let cache = { mask: null, dist: {}, contours: null, silhouette: null };
 function invalidateMask() { cache = { mask: null, dist: {}, contours: null, silhouette: null, bbox: null }; }
 
 // ---------- image loading ----------
-function loadFile(file) {
-  const url = URL.createObjectURL(file);
-  const img = new Image();
-  img.onload = () => {
-    URL.revokeObjectURL(url);
-    state.img = img;
-    setupWorkingSize();
-    invalidateMask();
-    $('drop').classList.add('hidden');
-    $('canvasWrap').classList.remove('hidden');
-    render();
-  };
-  img.src = url;
+function decodeImage(blob) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('could not decode image')); };
+    img.src = url;
+  });
+}
+
+// sample a downscaled copy: any pixel below ~98% alpha counts as transparency
+function hasTransparency(img) {
+  const s = Math.min(1, 256 / Math.max(img.naturalWidth, img.naturalHeight));
+  const w = Math.max(1, Math.round(img.naturalWidth * s));
+  const h = Math.max(1, Math.round(img.naturalHeight * s));
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0, w, h);
+  const data = ctx.getImageData(0, 0, w, h).data;
+  for (let p = 3; p < data.length; p += 4) {
+    if (data[p] < 250) return true;
+  }
+  return false;
+}
+
+// same-origin nginx proxy → removebg.camfung.dev (auth injected server-side)
+async function removeBackground(blob) {
+  const model = $('rbModel').value;
+  const form = new FormData();
+  form.append('file', blob, 'image');
+  const res = await fetch(`/api/remove?model=${encodeURIComponent(model)}`, {
+    method: 'POST',
+    body: form,
+  });
+  if (!res.ok) throw new Error(`removebg API: ${res.status} ${res.statusText}`);
+  return res.blob();
+}
+
+function showImage(img) {
+  state.img = img;
+  setupWorkingSize();
+  invalidateMask();
+  $('drop').classList.add('hidden');
+  $('canvasWrap').classList.remove('hidden');
+  render();
+}
+
+let removing = false;
+async function loadFile(blob) {
+  let img;
+  try { img = await decodeImage(blob); }
+  catch (err) { $('status').textContent = String(err.message || err); return; }
+  state.origBlob = blob;
+  $('removeBgBtn').disabled = false;
+  showImage(img);
+  if ($('autoRemove').checked && !hasTransparency(img)) {
+    runRemoveBackground();
+  }
+}
+
+async function runRemoveBackground() {
+  if (removing || !state.origBlob) return;
+  removing = true;
+  $('removeBgBtn').disabled = true;
+  $('status').textContent = `removing background (${$('rbModel').value}) — can take ~15s…`;
+  try {
+    const cut = await removeBackground(state.origBlob);
+    showImage(await decodeImage(cut));
+  } catch (err) {
+    $('status').textContent = `background removal failed: ${err.message || err}`;
+  } finally {
+    removing = false;
+    $('removeBgBtn').disabled = false;
+  }
 }
 
 function setupWorkingSize() {
@@ -875,6 +954,7 @@ function rebuildLayerUI() {
 
 // ---------- wiring ----------
 $('file').addEventListener('change', e => e.target.files[0] && loadFile(e.target.files[0]));
+$('removeBgBtn').addEventListener('click', runRemoveBackground);
 
 const dropTargets = [document.body];
 document.body.addEventListener('dragover', e => { e.preventDefault(); $('drop').classList.add('hover'); });

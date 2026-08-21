@@ -1,0 +1,22 @@
+# Served via the nginx:alpine entrypoint's envsubst: ${REMOVEBG_AUTH} is
+# filled from the container environment (only set env vars are substituted,
+# so nginx runtime vars like $host are untouched).
+server {
+    listen 80;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Same-origin proxy to the removebg service. Keeps the basic-auth
+    # credential server-side and sidesteps CORS entirely.
+    location /api/ {
+        proxy_pass https://removebg.camfung.dev;
+        proxy_set_header Host removebg.camfung.dev;
+        proxy_set_header Authorization "Basic ${REMOVEBG_AUTH}";
+        proxy_ssl_server_name on;
+        client_max_body_size 50m;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}
