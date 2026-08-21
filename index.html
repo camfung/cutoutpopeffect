@@ -249,6 +249,25 @@ input[type=color] {
   </fieldset>
 
   <fieldset>
+    <legend>Layer spacing</legend>
+    <select id="spacingPattern">
+      <option value="custom">custom (set each layer)</option>
+      <option value="equal">all layers equal</option>
+      <option value="growing">growing layers</option>
+      <option value="shrinking">shrinking layers</option>
+    </select>
+    <div id="intervalRow" class="hidden">
+      <label>Interval <span class="val" id="intervalVal">24</span></label>
+      <input type="range" id="interval" min="2" max="200" value="24">
+    </div>
+    <div id="stepRow" class="hidden">
+      <label>Change per layer <span class="val" id="stepVal">12</span></label>
+      <input type="range" id="step" min="0" max="100" value="12">
+    </div>
+    <div class="algo-desc">layer size is measured from the previous layer's edge, so layers stack outward</div>
+  </fieldset>
+
+  <fieldset>
     <legend>Outline layers</legend>
     <div id="layers"></div>
     <div style="margin-top:8px">
@@ -305,11 +324,34 @@ const state = {
   roundness: 10,
   bgMode: 'transparent',
   bgColor: '#f4f1e6',
+  // layer size = thickness from the previous layer's edge (cumulative outward)
   layers: [
     { color: '#ffffff', size: 24 },
-    { color: '#ff5d5d', size: 48 },
+    { color: '#ff5d5d', size: 24 },
   ],
+  pattern: 'custom',  // custom | equal | growing | shrinking
+  interval: 24,
+  step: 12,
 };
+
+// absolute outward extent per layer: running sum of thicknesses, in list order
+function absoluteSizes() {
+  let acc = 0;
+  return state.layers.map(l => (acc += Math.max(0, l.size)));
+}
+
+function patternThickness(i) {
+  const { pattern, interval, step } = state;
+  if (pattern === 'equal') return interval;
+  if (pattern === 'growing') return interval + step * i;
+  if (pattern === 'shrinking') return Math.max(2, interval - step * i);
+  return null;
+}
+
+function applyPattern() {
+  if (state.pattern === 'custom') return;
+  state.layers.forEach((l, i) => { l.size = patternThickness(i); });
+}
 
 const ALGO_DESC = {
   edt: 'Exact Euclidean distance transform of the alpha mask. Uniform offset in every direction — smooth, rounded corners. What scikit-image / OpenCV do for fast dilation with a disc.',
@@ -426,8 +468,8 @@ async function runRemoveBackground() {
 }
 
 function setupWorkingSize() {
-  // pad by the max possible layer size so outlines never clip
-  const maxSize = Math.max(...state.layers.map(l => l.size), 8);
+  // pad by the total outward extent so outlines never clip
+  const maxSize = Math.max(...absoluteSizes(), 8);
   state.pad = maxSize + 8;
   // cap working resolution for distance-transform perf
   const MAXDIM = 1600;
@@ -821,18 +863,21 @@ function render() {
     }
   }
 
-  // largest layer first (drawn underneath)
-  const layers = [...state.layers].sort((a, b) => b.size - a.size);
-  for (const layer of layers) {
-    if (layer.size <= 0) continue;
+  // absolute sizes accumulate down the list, so the last layer is the
+  // outermost — draw it first so inner layers land on top
+  const abs = absoluteSizes();
+  for (let i = state.layers.length - 1; i >= 0; i--) {
+    const layer = state.layers[i];
+    const size = abs[i];
+    if (layer.size <= 0 || size <= 0) continue;
     if (state.algo === 'scale') {
-      renderScaleLayer(outCtx, layer.size, layer.color);
+      renderScaleLayer(outCtx, size, layer.color);
     } else if (state.algo === 'stamp') {
-      renderStampLayer(outCtx, layer.size, layer.color, state.stamps);
+      renderStampLayer(outCtx, size, layer.color, state.stamps);
     } else if (state.algo === 'contour') {
-      renderContourLayer(outCtx, layer.size, layer.color, state.lineJoin);
+      renderContourLayer(outCtx, size, layer.color, state.lineJoin);
     } else {
-      renderDistLayer(outCtx, getDist(state.algo), layer.size, layer.color, state.smooth);
+      renderDistLayer(outCtx, getDist(state.algo), size, layer.color, state.smooth);
     }
   }
 
@@ -949,7 +994,7 @@ function rebuildLayerUI() {
     const div = document.createElement('div');
     div.className = 'layer';
     div.innerHTML = `
-      <label>size (px) <input type="number" class="val" min="1" value="${layer.size}" data-idx="${idx}" data-k="sizeNum"></label>
+      <label>size from prev layer (px) <input type="number" class="val" min="1" value="${layer.size}" data-idx="${idx}" data-k="sizeNum"></label>
       <input type="range" min="1" max="500" value="${layer.size}" data-idx="${idx}" data-k="size">
       <div class="row">
         <input type="color" value="${layer.color}" data-idx="${idx}" data-k="color">
@@ -966,6 +1011,7 @@ function rebuildLayerUI() {
       const i = +e.target.dataset.idx;
       state.layers[i].size = +e.target.value;
       e.target.parentElement.querySelector('.val').value = e.target.value;
+      setPattern('custom');
       requestRender();
     });
   });
@@ -976,6 +1022,7 @@ function rebuildLayerUI() {
       state.layers[i].size = v;
       const slider = e.target.closest('.layer').querySelector('input[type=range]');
       slider.value = Math.min(v, +slider.max);
+      setPattern('custom');
       requestRender();
     });
   });
@@ -996,6 +1043,7 @@ function rebuildLayerUI() {
   wrap.querySelectorAll('button.rm').forEach(el => {
     el.addEventListener('click', e => {
       state.layers.splice(+e.target.dataset.idx, 1);
+      applyPattern(); // keep growing/shrinking sequences contiguous after removal
       rebuildLayerUI();
       requestRender();
     });
@@ -1073,9 +1121,39 @@ $('bgDim').addEventListener('input', e => {
 $('addLayer').addEventListener('click', () => {
   const last = state.layers[state.layers.length - 1];
   const pal = currentPalette();
-  state.layers.push({ color: pal[state.layers.length % pal.length], size: (last ? last.size : 20) + 24 });
+  const size = patternThickness(state.layers.length) ?? (last ? last.size : 24);
+  state.layers.push({ color: pal[state.layers.length % pal.length], size });
   rebuildLayerUI();
   requestRender();
+});
+
+// ---------- spacing pattern ----------
+function setPattern(p) {
+  state.pattern = p;
+  $('spacingPattern').value = p;
+  $('intervalRow').classList.toggle('hidden', p === 'custom');
+  $('stepRow').classList.toggle('hidden', p !== 'growing' && p !== 'shrinking');
+}
+
+function patternChanged() {
+  applyPattern();
+  rebuildLayerUI();
+  requestRender();
+}
+
+$('spacingPattern').addEventListener('change', e => {
+  setPattern(e.target.value);
+  patternChanged();
+});
+$('interval').addEventListener('input', e => {
+  state.interval = +e.target.value;
+  $('intervalVal').textContent = e.target.value;
+  patternChanged();
+});
+$('step').addEventListener('input', e => {
+  state.step = +e.target.value;
+  $('stepVal').textContent = e.target.value;
+  patternChanged();
 });
 
 $('download').addEventListener('click', () => {
