@@ -1,0 +1,8 @@
+# Static single-page app served by nginx. The compose project (directory)
+# name namespaces the service, matching the CamAppEngine convention.
+services:
+  cutoutpopeffect:
+    build: .
+    ports:
+      - "${PORT:-8779}:80"
+    restart: unless-stopped

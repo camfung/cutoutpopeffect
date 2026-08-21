@@ -1,0 +1,957 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cutout Pop Effect</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌟</text></svg>">
+<style>
+:root {
+  --font-mono: 'Hurmit Nerd Font', 'Hurmit Nerd Font Mono', ui-monospace, monospace;
+  --bg: #1a1d1a;
+  --panel: #242824;
+  --panel2: #2d322d;
+  --ink: #e8e6d9;
+  --muted: #9aa398;
+  --accent: #a3b18a;
+  --border: #3a403a;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: var(--font-mono);
+  background: var(--bg);
+  color: var(--ink);
+  display: flex;
+  min-height: 100vh;
+}
+#sidebar {
+  width: 340px;
+  min-width: 340px;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  padding: 16px;
+  overflow-y: auto;
+  max-height: 100vh;
+}
+#main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  position: relative;
+}
+h1 { font-size: 18px; margin: 0 0 4px; color: var(--accent); }
+.sub { font-size: 11px; color: var(--muted); margin-bottom: 16px; }
+fieldset {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin: 0 0 14px;
+  padding: 10px 12px 12px;
+}
+legend { font-size: 11px; color: var(--accent); padding: 0 6px; text-transform: uppercase; letter-spacing: 1px; }
+label { display: block; font-size: 12px; margin: 8px 0 3px; color: var(--muted); }
+label .val { float: right; color: var(--ink); }
+label input.val {
+  width: 58px; padding: 1px 4px; font-size: 12px;
+  background: var(--panel, transparent); color: var(--ink);
+  border: 1px solid var(--muted); border-radius: 4px;
+}
+input[type=range] { width: 100%; accent-color: var(--accent); }
+select, button, input[type=file], input[type=text], textarea {
+  width: 100%;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  background: var(--panel2);
+  color: var(--ink);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 8px;
+}
+button { cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: #1a1d1a; font-weight: bold; }
+.algo-desc { font-size: 11px; color: var(--muted); margin-top: 6px; line-height: 1.45; }
+.row { display: flex; gap: 8px; align-items: center; }
+.row > * { flex: 1; }
+input[type=color] {
+  width: 100%; height: 32px; padding: 2px;
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+}
+.swatches { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+#paletteColors { resize: vertical; min-height: 44px; margin-top: 8px; }
+#paletteName { margin-top: 8px; }
+#palettePreview { min-height: 24px; }
+.palette-btns { margin-top: 8px; }
+.swatch {
+  width: 24px; height: 24px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--border);
+}
+.swatch:hover { border-color: var(--ink); }
+.layer {
+  border: 1px solid var(--border); border-radius: 6px;
+  padding: 8px; margin-top: 8px; background: var(--panel2);
+}
+.layer .row { margin-top: 4px; }
+.layer button.rm { flex: 0 0 32px; }
+#canvasWrap {
+  max-width: 100%;
+  max-height: calc(100vh - 120px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  /* checkerboard to show transparency */
+  background:
+    repeating-conic-gradient(#2c302c 0% 25%, #232723 0% 50%) 0 / 24px 24px;
+}
+#out { display: block; max-width: 100%; max-height: calc(100vh - 122px); }
+#drop {
+  border: 2px dashed var(--border);
+  border-radius: 12px;
+  padding: 60px 40px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+#drop.hover { border-color: var(--accent); color: var(--accent); }
+#status {
+  position: absolute; bottom: 8px; right: 16px;
+  font-size: 11px; color: var(--muted);
+}
+.hidden { display: none !important; }
+.checkline { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); margin: 8px 0 0; }
+.checkline input { width: auto; accent-color: var(--accent); }
+
+@media (max-width: 768px) {
+  body { flex-direction: column; }
+  #main {
+    order: 1;
+    padding: 12px;
+    min-height: 45vh;
+    justify-content: flex-start;
+  }
+  #sidebar {
+    order: 2;
+    width: 100%;
+    min-width: 0;
+    max-height: none;
+    border-right: none;
+    border-top: 1px solid var(--border);
+  }
+  #out { max-height: 44vh; }
+  #canvasWrap { max-height: 44vh; }
+  #drop { padding: 40px 20px; }
+  /* bigger touch targets */
+  select, button, input[type=file] { padding: 11px 10px; font-size: 14px; }
+  input[type=range] { height: 32px; }
+  .swatch { width: 34px; height: 34px; }
+  input[type=color] { height: 40px; }
+  #status { position: static; text-align: right; width: 100%; padding: 4px 4px 0; }
+}
+</style>
+</head>
+<body>
+
+<div id="sidebar">
+  <h1>Cutout Pop Effect</h1>
+  <div class="sub">expand your cutout's silhouette into a pop of color</div>
+
+  <fieldset>
+    <legend>Image</legend>
+    <input type="file" id="file" accept="image/png,image/webp,image/gif">
+  </fieldset>
+
+  <fieldset>
+    <legend>Algorithm</legend>
+    <select id="algo">
+      <option value="edt">Distance field — Euclidean (round)</option>
+      <option value="cheby">Distance field — Chebyshev (square)</option>
+      <option value="manhattan">Distance field — Manhattan (diamond)</option>
+      <option value="scale">Silhouette scaling (shape-true)</option>
+      <option value="stamp">Silhouette stamping (classic sticker)</option>
+      <option value="contour">Vector contour + stroke</option>
+    </select>
+    <div class="algo-desc" id="algoDesc"></div>
+    <div id="contourOpts" class="hidden">
+      <label>Line join</label>
+      <select id="lineJoin">
+        <option value="round">round</option>
+        <option value="miter">miter (sharp)</option>
+        <option value="bevel">bevel</option>
+      </select>
+      <label>Simplify <span class="val" id="simplifyVal">2</span></label>
+      <input type="range" id="simplify" min="0" max="20" value="2" step="0.5">
+    </div>
+    <div id="scaleOpts" class="hidden">
+      <label>Roundness <span class="val" id="roundVal">10</span></label>
+      <input type="range" id="roundness" min="1" max="40" value="10">
+    </div>
+    <div id="stampOpts" class="hidden">
+      <label>Stamp count <span class="val" id="stampsVal">32</span></label>
+      <input type="range" id="stamps" min="4" max="128" value="32">
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Mask</legend>
+    <label>Alpha threshold <span class="val" id="threshVal">128</span></label>
+    <input type="range" id="thresh" min="1" max="254" value="128">
+    <div class="checkline">
+      <input type="checkbox" id="smooth" checked>
+      <span>anti-aliased edge</span>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Palettes</legend>
+    <select id="paletteSelect"></select>
+    <div class="swatches" id="palettePreview"></div>
+    <input type="text" id="paletteName" placeholder="palette name">
+    <textarea id="paletteColors" rows="2" placeholder='["#606c38","#283618"] or #606c38, #283618'></textarea>
+    <div class="row palette-btns">
+      <button id="savePalette">save</button>
+      <button id="deletePalette">delete</button>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Outline layers</legend>
+    <div id="layers"></div>
+    <div style="margin-top:8px">
+      <button id="addLayer">+ add layer</button>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Background</legend>
+    <select id="bgMode">
+      <option value="transparent">transparent</option>
+      <option value="solid">solid color</option>
+    </select>
+    <div id="bgColorRow" class="row hidden" style="margin-top:8px">
+      <input type="color" id="bgColor" value="#f4f1e6">
+    </div>
+  </fieldset>
+
+  <button class="primary" id="download">Download PNG</button>
+</div>
+
+<div id="main">
+  <div id="drop">drop a transparent PNG here<br><br>(or paste from clipboard, or use the file picker)</div>
+  <div id="canvasWrap" class="hidden"><canvas id="out"></canvas></div>
+  <div id="status"></div>
+</div>
+
+<script>
+'use strict';
+
+// ---------- state ----------
+const state = {
+  img: null,          // HTMLImageElement
+  w: 0, h: 0,         // working size (image + max outline padding)
+  pad: 0,
+  algo: 'edt',
+  thresh: 128,
+  smooth: true,
+  stamps: 32,
+  lineJoin: 'round',
+  simplify: 2,
+  roundness: 10,
+  bgMode: 'transparent',
+  bgColor: '#f4f1e6',
+  layers: [
+    { color: '#ffffff', size: 24 },
+    { color: '#ff5d5d', size: 48 },
+  ],
+};
+
+const ALGO_DESC = {
+  edt: 'Exact Euclidean distance transform of the alpha mask. Uniform offset in every direction — smooth, rounded corners. What scikit-image / OpenCV do for fast dilation with a disc.',
+  cheby: 'Chebyshev (chessboard) distance. Grows equally in 8 directions — corners become square, like dilating with a square structuring element.',
+  manhattan: 'Manhattan (taxicab) distance. Grows along axes only — corners become 45° diamonds.',
+  scale: 'Enlarges the silhouette around its own center, then applies a small round dilation. Growth follows the shape — concavities and gaps survive at big sizes — while roundness smooths the edge and fills hairline echo gaps.',
+  stamp: 'Draws a tinted copy of the silhouette N times around a circle. The classic canvas / CSS multi-drop-shadow sticker trick. Low stamp counts give a lumpy hand-cut look.',
+  contour: 'Marching-squares traces the mask boundary into vector paths, then strokes them with a fat line. Line join controls corner style. Fully resolution-independent character.',
+};
+
+// ---------- dom ----------
+const $ = id => document.getElementById(id);
+const outCanvas = $('out');
+const outCtx = outCanvas.getContext('2d');
+
+// caches, invalidated when image/threshold change
+let cache = { mask: null, dist: {}, contours: null, silhouette: null };
+
+function invalidateMask() { cache = { mask: null, dist: {}, contours: null, silhouette: null, bbox: null }; }
+
+// ---------- image loading ----------
+function loadFile(file) {
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    URL.revokeObjectURL(url);
+    state.img = img;
+    setupWorkingSize();
+    invalidateMask();
+    $('drop').classList.add('hidden');
+    $('canvasWrap').classList.remove('hidden');
+    render();
+  };
+  img.src = url;
+}
+
+function setupWorkingSize() {
+  // pad by the max possible layer size so outlines never clip
+  const maxSize = Math.max(...state.layers.map(l => l.size), 8);
+  state.pad = maxSize + 8;
+  // cap working resolution for distance-transform perf
+  const MAXDIM = 1600;
+  let iw = state.img.naturalWidth, ih = state.img.naturalHeight;
+  const scale = Math.min(1, MAXDIM / Math.max(iw, ih));
+  state.iw = Math.round(iw * scale);
+  state.ih = Math.round(ih * scale);
+  const w = state.iw + state.pad * 2;
+  const h = state.ih + state.pad * 2;
+  // cached mask/dist arrays are indexed by w*h stride — stale sizes shear the render
+  if (w !== state.w || h !== state.h) invalidateMask();
+  state.w = w;
+  state.h = h;
+}
+
+// ---------- mask extraction ----------
+function getMask() {
+  if (cache.mask) return cache.mask;
+  const c = document.createElement('canvas');
+  c.width = state.w; c.height = state.h;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(state.img, state.pad, state.pad, state.iw, state.ih);
+  const data = ctx.getImageData(0, 0, state.w, state.h).data;
+  const mask = new Uint8Array(state.w * state.h);
+  const t = state.thresh;
+  for (let i = 0, p = 3; i < mask.length; i++, p += 4) {
+    mask[i] = data[p] >= t ? 1 : 0;
+  }
+  cache.mask = mask;
+  return mask;
+}
+
+// ---------- distance transforms ----------
+// Exact Euclidean via Felzenszwalb & Huttenlocher two-pass 1D method.
+function edt(inputMask) {
+  const { w, h } = state;
+  const mask = inputMask || getMask();
+  const INF = 1e18;
+  const f = new Float64Array(Math.max(w, h));
+  const d = new Float64Array(Math.max(w, h));
+  const v = new Int32Array(Math.max(w, h));
+  const z = new Float64Array(Math.max(w, h) + 1);
+  const g = new Float64Array(w * h);
+
+  // 1D squared distance transform
+  function dt1d(n) {
+    let k = 0;
+    v[0] = 0; z[0] = -INF; z[1] = INF;
+    for (let q = 1; q < n; q++) {
+      let s;
+      while (true) {
+        const p = v[k];
+        s = ((f[q] + q * q) - (f[p] + p * p)) / (2 * q - 2 * p);
+        if (s <= z[k]) k--; else break;
+      }
+      k++;
+      v[k] = q; z[k] = s; z[k + 1] = INF;
+    }
+    k = 0;
+    for (let q = 0; q < n; q++) {
+      while (z[k + 1] < q) k++;
+      const p = v[k];
+      d[q] = (q - p) * (q - p) + f[p];
+    }
+  }
+
+  // columns
+  for (let x = 0; x < w; x++) {
+    for (let y = 0; y < h; y++) f[y] = mask[y * w + x] ? 0 : INF;
+    dt1d(h);
+    for (let y = 0; y < h; y++) g[y * w + x] = d[y];
+  }
+  // rows
+  const dist = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    const off = y * w;
+    for (let x = 0; x < w; x++) f[x] = g[off + x];
+    dt1d(w);
+    for (let x = 0; x < w; x++) dist[off + x] = Math.sqrt(d[x]);
+  }
+  return dist;
+}
+
+// Chamfer two-pass for Chebyshev (8-neighbor, diag cost 1) and Manhattan (4-neighbor).
+function chamfer(metric) {
+  const { w, h } = state;
+  const mask = getMask();
+  const INF = 1e9;
+  const dist = new Float32Array(w * h);
+  for (let i = 0; i < dist.length; i++) dist[i] = mask[i] ? 0 : INF;
+  const diag = metric === 'cheby' ? 1 : INF; // manhattan: no diagonal step
+
+  // forward
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      let v = dist[i];
+      if (x > 0) v = Math.min(v, dist[i - 1] + 1);
+      if (y > 0) v = Math.min(v, dist[i - w] + 1);
+      if (metric === 'cheby') {
+        if (x > 0 && y > 0) v = Math.min(v, dist[i - w - 1] + diag);
+        if (x < w - 1 && y > 0) v = Math.min(v, dist[i - w + 1] + diag);
+      }
+      dist[i] = v;
+    }
+  }
+  // backward
+  for (let y = h - 1; y >= 0; y--) {
+    for (let x = w - 1; x >= 0; x--) {
+      const i = y * w + x;
+      let v = dist[i];
+      if (x < w - 1) v = Math.min(v, dist[i + 1] + 1);
+      if (y < h - 1) v = Math.min(v, dist[i + w] + 1);
+      if (metric === 'cheby') {
+        if (x < w - 1 && y < h - 1) v = Math.min(v, dist[i + w + 1] + diag);
+        if (x > 0 && y < h - 1) v = Math.min(v, dist[i + w - 1] + diag);
+      }
+      dist[i] = v;
+    }
+  }
+  return dist;
+}
+
+function getDist(kind) {
+  if (cache.dist[kind]) return cache.dist[kind];
+  const d = kind === 'edt' ? edt() : chamfer(kind);
+  cache.dist[kind] = d;
+  return d;
+}
+
+// ---------- distance-field layer render ----------
+function renderDistLayer(ctx, dist, size, color, smooth) {
+  const { w, h } = state;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const lctx = c.getContext('2d');
+  const imgData = lctx.createImageData(w, h);
+  const px = imgData.data;
+  const [r, g, b] = hexToRgb(color);
+  for (let i = 0; i < dist.length; i++) {
+    const d = dist[i];
+    let a = 0;
+    if (smooth) {
+      a = Math.max(0, Math.min(1, size + 0.5 - d));
+    } else {
+      a = d <= size ? 1 : 0;
+    }
+    if (a > 0) {
+      const p = i * 4;
+      px[p] = r; px[p + 1] = g; px[p + 2] = b; px[p + 3] = a * 255;
+    }
+  }
+  lctx.putImageData(imgData, 0, 0);
+  ctx.drawImage(c, 0, 0);
+}
+
+// ---------- silhouette (for stamping) ----------
+function getSilhouette() {
+  if (cache.silhouette) return cache.silhouette;
+  const { w, h } = state;
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(state.img, state.pad, state.pad, state.iw, state.ih);
+  const id = ctx.getImageData(0, 0, w, h);
+  const px = id.data;
+  const t = state.thresh;
+  for (let p = 0; p < px.length; p += 4) {
+    const a = px[p + 3] >= t ? 255 : 0;
+    px[p] = 255; px[p + 1] = 255; px[p + 2] = 255; px[p + 3] = a;
+  }
+  ctx.putImageData(id, 0, 0);
+  cache.silhouette = c;
+  return c;
+}
+
+function tintedSilhouette(color) {
+  const { w, h } = state;
+  const tinted = document.createElement('canvas');
+  tinted.width = w; tinted.height = h;
+  const tctx = tinted.getContext('2d');
+  tctx.drawImage(getSilhouette(), 0, 0);
+  tctx.globalCompositeOperation = 'source-in';
+  tctx.fillStyle = color;
+  tctx.fillRect(0, 0, w, h);
+  return tinted;
+}
+
+function getMaskBBox() {
+  if (cache.bbox) return cache.bbox;
+  const { w, h } = state;
+  const mask = getMask();
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let y = 0; y < h; y++) {
+    const off = y * w;
+    for (let x = 0; x < w; x++) {
+      if (!mask[off + x]) continue;
+      if (x < x0) x0 = x;
+      if (x > x1) x1 = x;
+      if (y < y0) y0 = y;
+      if (y > y1) y1 = y;
+    }
+  }
+  cache.bbox = { x0, y0, x1, y1 };
+  return cache.bbox;
+}
+
+// enlarged copy of the silhouette, centered on its bbox — keeps concavities at any size
+function renderScaleLayer(ctx, size, color) {
+  const bb = getMaskBBox();
+  if (bb.x1 < 0) return;
+  const bw = bb.x1 - bb.x0 + 1, bh = bb.y1 - bb.y0 + 1;
+  const { w, h } = state;
+  const round = Math.max(1, Math.min(state.roundness, size));
+  const grow = size - round;
+  // per-axis so short and long axes both grow ~grow px at the bbox edge
+  const sfx = 1 + (2 * grow) / bw;
+  const sfy = 1 + (2 * grow) / bh;
+  const cx = (bb.x0 + bb.x1) / 2, cy = (bb.y0 + bb.y1) / 2;
+
+  // scaled silhouette → mask → small round dilation via EDT
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const sctx = c.getContext('2d', { willReadFrequently: true });
+  sctx.setTransform(sfx, 0, 0, sfy, cx * (1 - sfx), cy * (1 - sfy));
+  sctx.drawImage(getSilhouette(), 0, 0);
+  const data = sctx.getImageData(0, 0, w, h).data;
+  const mask = new Uint8Array(w * h);
+  const orig = getMask(); // union with original so the outline always contains the image
+  for (let i = 0, p = 3; i < mask.length; i++, p += 4) mask[i] = (data[p] >= 128 || orig[i]) ? 1 : 0;
+  renderDistLayer(ctx, edt(mask), round, color, state.smooth);
+}
+
+function renderStampLayer(ctx, size, color, count) {
+  const tinted = tintedSilhouette(color);
+
+  // stamp around circle, plus a few inner rings so thick outlines have no holes
+  const rings = Math.max(1, Math.ceil(size / 6));
+  for (let ring = 1; ring <= rings; ring++) {
+    const r = size * ring / rings;
+    const n = ring === rings ? count : Math.max(6, Math.round(count * ring / rings));
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * Math.PI * 2;
+      ctx.drawImage(tinted, Math.cos(a) * r, Math.sin(a) * r);
+    }
+  }
+  ctx.drawImage(tinted, 0, 0);
+}
+
+// ---------- contour tracing (Moore boundary following per component) ----------
+function getContours() {
+  if (cache.contours) return cache.contours;
+  const { w, h } = state;
+  const mask = getMask();
+  const at = (x, y) => (x >= 0 && y >= 0 && x < w && y < h) ? mask[y * w + x] : 0;
+
+  // 8-connectivity component labeling via flood fill
+  const labels = new Int32Array(w * h);
+  let nextLabel = 0;
+  const starts = []; // first (scan-order) pixel of each component
+  const stack = [];
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (!mask[i] || labels[i]) continue;
+      nextLabel++;
+      starts.push([x, y]);
+      labels[i] = nextLabel;
+      stack.push(i);
+      while (stack.length) {
+        const j = stack.pop();
+        const jx = j % w, jy = (j / w) | 0;
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const nx = jx + dx, ny = jy + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+          const n = ny * w + nx;
+          if (mask[n] && !labels[n]) { labels[n] = nextLabel; stack.push(n); }
+        }
+      }
+    }
+  }
+
+  // Moore neighbors, clockwise starting west
+  const NB = [[-1,0],[-1,-1],[0,-1],[1,-1],[1,0],[1,1],[0,1],[-1,1]];
+  const paths = [];
+  for (const [sx, sy] of starts) {
+    const path = [[sx + 0.5, sy + 0.5]];
+    // backtrack starts at west neighbor (guaranteed empty by scan order)
+    let bx = sx, by = sy;          // current boundary pixel
+    let backDir = 0;               // index in NB pointing at backtrack cell
+    let guard = 0;
+    const MAX = w * h * 4;
+    const seen = new Set();        // (pixel, backDir) states — repeat means loop closed
+    const dirIdx = (dx, dy) => NB.findIndex(v => v[0] === dx && v[1] === dy);
+    while (guard++ < MAX) {
+      const key = (by * w + bx) * 8 + backDir;
+      if (seen.has(key)) break;
+      seen.add(key);
+      // search clockwise from the cell after backtrack
+      let found = -1, ex = 0, ey = 0;
+      for (let k = 1; k <= 8; k++) {
+        const d = (backDir + k) % 8;
+        const cx = bx + NB[d][0], cy = by + NB[d][1];
+        if (at(cx, cy)) { found = d; break; }
+        ex = cx; ey = cy; // last empty cell checked
+      }
+      if (found === -1) break; // isolated pixel
+      if (found === (backDir + 1) % 8) { ex = bx + NB[backDir][0]; ey = by + NB[backDir][1]; }
+      const nx = bx + NB[found][0], ny = by + NB[found][1];
+      // new backtrack = last empty cell, as a direction from the new pixel
+      bx = nx; by = ny;
+      backDir = dirIdx(ex - bx, ey - by);
+      if (backDir === -1) backDir = 0; // shouldn't happen; keep tracing
+      path.push([bx + 0.5, by + 0.5]);
+    }
+    paths.push(path);
+  }
+  cache.contours = paths;
+  return paths;
+}
+
+// Ramer–Douglas–Peucker simplification (closed loops: endpoint duplicated)
+function rdp(points, eps) {
+  if (points.length < 3 || eps <= 0) return points;
+  const keep = new Uint8Array(points.length);
+  keep[0] = keep[points.length - 1] = 1;
+  const stackR = [[0, points.length - 1]];
+  while (stackR.length) {
+    const [a, b] = stackR.pop();
+    const [ax, ay] = points[a], [bx, by] = points[b];
+    const dx = bx - ax, dy = by - ay;
+    const len = Math.hypot(dx, dy) || 1e-9;
+    let maxD = -1, maxI = -1;
+    for (let i = a + 1; i < b; i++) {
+      const d = Math.abs(dy * points[i][0] - dx * points[i][1] + bx * ay - by * ax) / len;
+      if (d > maxD) { maxD = d; maxI = i; }
+    }
+    if (maxD > eps) {
+      keep[maxI] = 1;
+      stackR.push([a, maxI], [maxI, b]);
+    }
+  }
+  return points.filter((_, i) => keep[i]);
+}
+
+function renderContourLayer(ctx, size, color, join) {
+  const eps = state.simplify;
+  const paths = getContours().map(p => {
+    if (p.length < 6 || eps <= 0) return p;
+    // closed loop: RDP needs a non-degenerate baseline, so simplify two halves
+    const m = p.length >> 1;
+    const a = rdp(p.slice(0, m + 1), eps);
+    const b = rdp(p.slice(m), eps);
+    return [...a.slice(0, -1), ...b.slice(0, -1)];
+  });
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = size * 2; // stroke centered on edge; inner half hidden by image
+  ctx.lineJoin = join;
+  ctx.miterLimit = 4;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  for (const p of paths) {
+    ctx.moveTo(p[0][0], p[0][1]);
+    for (let i = 1; i < p.length; i++) ctx.lineTo(p[i][0], p[i][1]);
+    ctx.closePath();
+  }
+  ctx.stroke();
+  ctx.fill(); // fill interior so semi-open shapes stay solid under the image
+  ctx.restore();
+}
+
+// ---------- main render ----------
+function render() {
+  if (!state.img) return;
+  const t0 = performance.now();
+  setupWorkingSize();
+  const { w, h } = state;
+  outCanvas.width = w; outCanvas.height = h;
+  outCtx.clearRect(0, 0, w, h);
+
+  if (state.bgMode === 'solid') {
+    outCtx.fillStyle = state.bgColor;
+    outCtx.fillRect(0, 0, w, h);
+  }
+
+  // largest layer first (drawn underneath)
+  const layers = [...state.layers].sort((a, b) => b.size - a.size);
+  for (const layer of layers) {
+    if (layer.size <= 0) continue;
+    if (state.algo === 'scale') {
+      renderScaleLayer(outCtx, layer.size, layer.color);
+    } else if (state.algo === 'stamp') {
+      renderStampLayer(outCtx, layer.size, layer.color, state.stamps);
+    } else if (state.algo === 'contour') {
+      renderContourLayer(outCtx, layer.size, layer.color, state.lineJoin);
+    } else {
+      renderDistLayer(outCtx, getDist(state.algo), layer.size, layer.color, state.smooth);
+    }
+  }
+
+  outCtx.drawImage(state.img, state.pad, state.pad, state.iw, state.ih);
+  $('status').textContent =
+    `${state.iw}×${state.ih}px · ${state.algo} · ${(performance.now() - t0).toFixed(0)}ms`;
+}
+
+// debounce for slider drags
+let renderTimer = null;
+function requestRender() {
+  clearTimeout(renderTimer);
+  renderTimer = setTimeout(render, 30);
+}
+
+// ---------- helpers ----------
+function hexToRgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+// ---------- palettes ----------
+const BUILTIN_PALETTES = {
+  'default': ['#ffffff', '#000000', '#ff5d5d', '#ffd166', '#06d6a0', '#118ab2', '#a3b18a', '#e76f51'],
+  'earthy': ['#606c38', '#283618', '#fefae0', '#dda15e', '#bc6c25'],
+};
+const PALETTE_KEY = 'cutout-pop-palettes';
+const PALETTE_SEL_KEY = 'cutout-pop-palette-selected';
+
+function loadPalettes() {
+  try { return { ...BUILTIN_PALETTES, ...JSON.parse(localStorage.getItem(PALETTE_KEY) || '{}') }; }
+  catch { return { ...BUILTIN_PALETTES }; }
+}
+function saveUserPalettes() {
+  const user = {};
+  for (const [k, v] of Object.entries(palettes)) {
+    if (!BUILTIN_PALETTES[k]) user[k] = v;
+  }
+  localStorage.setItem(PALETTE_KEY, JSON.stringify(user));
+}
+let palettes = loadPalettes();
+let currentPaletteName = localStorage.getItem(PALETTE_SEL_KEY);
+if (!palettes[currentPaletteName]) currentPaletteName = 'default';
+
+function currentPalette() { return palettes[currentPaletteName] || BUILTIN_PALETTES['default']; }
+
+// accepts JSON array or comma/space/newline separated hex values
+function parsePaletteInput(text) {
+  let raw;
+  try { raw = JSON.parse(text); } catch { raw = text.split(/[\s,;'"[\]]+/); }
+  if (!Array.isArray(raw)) return null;
+  const colors = raw
+    .map(c => String(c).trim())
+    .filter(Boolean)
+    .map(c => c.startsWith('#') ? c : '#' + c)
+    .filter(c => /^#([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i.test(c));
+  return colors.length ? colors : null;
+}
+
+function rebuildPaletteUI() {
+  const sel = $('paletteSelect');
+  sel.innerHTML = '';
+  Object.keys(palettes).forEach(name => {
+    const opt = document.createElement('option');
+    opt.value = name;
+    opt.textContent = name + (BUILTIN_PALETTES[name] ? ' (built-in)' : '');
+    sel.appendChild(opt);
+  });
+  sel.value = currentPaletteName;
+  const prev = $('palettePreview');
+  prev.innerHTML = currentPalette().map(c =>
+    `<div class="swatch" style="background:${c}" title="${c}"></div>`).join('');
+}
+
+$('paletteSelect').addEventListener('change', e => {
+  currentPaletteName = e.target.value;
+  localStorage.setItem(PALETTE_SEL_KEY, currentPaletteName);
+  rebuildPaletteUI();
+  rebuildLayerUI();
+});
+
+$('savePalette').addEventListener('click', () => {
+  const name = $('paletteName').value.trim();
+  const colors = parsePaletteInput($('paletteColors').value);
+  if (!name) { alert('Give the palette a name.'); return; }
+  if (BUILTIN_PALETTES[name]) { alert('"' + name + '" is a built-in palette — pick another name.'); return; }
+  if (!colors) { alert('No valid hex colors found. Paste a JSON array or comma-separated hex values.'); return; }
+  palettes[name] = colors;
+  saveUserPalettes();
+  currentPaletteName = name;
+  localStorage.setItem(PALETTE_SEL_KEY, name);
+  $('paletteName').value = '';
+  $('paletteColors').value = '';
+  rebuildPaletteUI();
+  rebuildLayerUI();
+});
+
+$('deletePalette').addEventListener('click', () => {
+  if (BUILTIN_PALETTES[currentPaletteName]) { alert('Built-in palettes cannot be deleted.'); return; }
+  delete palettes[currentPaletteName];
+  saveUserPalettes();
+  currentPaletteName = 'default';
+  localStorage.setItem(PALETTE_SEL_KEY, currentPaletteName);
+  rebuildPaletteUI();
+  rebuildLayerUI();
+});
+
+// ---------- layer UI ----------
+
+function rebuildLayerUI() {
+  const wrap = $('layers');
+  wrap.innerHTML = '';
+  state.layers.forEach((layer, idx) => {
+    const div = document.createElement('div');
+    div.className = 'layer';
+    div.innerHTML = `
+      <label>size (px) <input type="number" class="val" min="1" value="${layer.size}" data-idx="${idx}" data-k="sizeNum"></label>
+      <input type="range" min="1" max="500" value="${layer.size}" data-idx="${idx}" data-k="size">
+      <div class="row">
+        <input type="color" value="${layer.color}" data-idx="${idx}" data-k="color">
+        <button class="rm" data-idx="${idx}" title="remove layer">✕</button>
+      </div>
+      <div class="swatches">${currentPalette().map(c =>
+        `<div class="swatch" style="background:${c}" data-idx="${idx}" data-c="${c}"></div>`).join('')}</div>
+    `;
+    wrap.appendChild(div);
+  });
+
+  wrap.querySelectorAll('input[type=range]').forEach(el => {
+    el.addEventListener('input', e => {
+      const i = +e.target.dataset.idx;
+      state.layers[i].size = +e.target.value;
+      e.target.parentElement.querySelector('.val').value = e.target.value;
+      requestRender();
+    });
+  });
+  wrap.querySelectorAll('input[type=number]').forEach(el => {
+    el.addEventListener('input', e => {
+      const i = +e.target.dataset.idx;
+      const v = Math.max(1, +e.target.value || 1);
+      state.layers[i].size = v;
+      const slider = e.target.closest('.layer').querySelector('input[type=range]');
+      slider.value = Math.min(v, +slider.max);
+      requestRender();
+    });
+  });
+  wrap.querySelectorAll('input[type=color]').forEach(el => {
+    el.addEventListener('input', e => {
+      state.layers[+e.target.dataset.idx].color = e.target.value;
+      requestRender();
+    });
+  });
+  wrap.querySelectorAll('.swatch').forEach(el => {
+    el.addEventListener('click', e => {
+      const i = +e.target.dataset.idx;
+      state.layers[i].color = e.target.dataset.c;
+      rebuildLayerUI();
+      requestRender();
+    });
+  });
+  wrap.querySelectorAll('button.rm').forEach(el => {
+    el.addEventListener('click', e => {
+      state.layers.splice(+e.target.dataset.idx, 1);
+      rebuildLayerUI();
+      requestRender();
+    });
+  });
+}
+
+// ---------- wiring ----------
+$('file').addEventListener('change', e => e.target.files[0] && loadFile(e.target.files[0]));
+
+const dropTargets = [document.body];
+document.body.addEventListener('dragover', e => { e.preventDefault(); $('drop').classList.add('hover'); });
+document.body.addEventListener('dragleave', () => $('drop').classList.remove('hover'));
+document.body.addEventListener('drop', e => {
+  e.preventDefault();
+  $('drop').classList.remove('hover');
+  const f = e.dataTransfer.files[0];
+  if (f) loadFile(f);
+});
+
+window.addEventListener('paste', e => {
+  const item = [...(e.clipboardData?.items || [])].find(i => i.type.startsWith('image/'));
+  if (!item) return;
+  e.preventDefault();
+  loadFile(item.getAsFile());
+});
+
+$('algo').addEventListener('change', e => {
+  state.algo = e.target.value;
+  $('algoDesc').textContent = ALGO_DESC[state.algo];
+  $('contourOpts').classList.toggle('hidden', state.algo !== 'contour');
+  $('stampOpts').classList.toggle('hidden', state.algo !== 'stamp');
+  $('scaleOpts').classList.toggle('hidden', state.algo !== 'scale');
+  requestRender();
+});
+$('algoDesc').textContent = ALGO_DESC[state.algo];
+
+$('thresh').addEventListener('input', e => {
+  state.thresh = +e.target.value;
+  $('threshVal').textContent = e.target.value;
+  invalidateMask();
+  requestRender();
+});
+$('smooth').addEventListener('change', e => { state.smooth = e.target.checked; requestRender(); });
+$('stamps').addEventListener('input', e => {
+  state.stamps = +e.target.value;
+  $('stampsVal').textContent = e.target.value;
+  requestRender();
+});
+$('roundness').addEventListener('input', e => {
+  state.roundness = +e.target.value;
+  $('roundVal').textContent = e.target.value;
+  requestRender();
+});
+$('lineJoin').addEventListener('change', e => { state.lineJoin = e.target.value; requestRender(); });
+$('simplify').addEventListener('input', e => {
+  state.simplify = +e.target.value;
+  $('simplifyVal').textContent = e.target.value;
+  requestRender();
+});
+
+$('bgMode').addEventListener('change', e => {
+  state.bgMode = e.target.value;
+  $('bgColorRow').classList.toggle('hidden', state.bgMode !== 'solid');
+  requestRender();
+});
+$('bgColor').addEventListener('input', e => { state.bgColor = e.target.value; requestRender(); });
+
+$('addLayer').addEventListener('click', () => {
+  const last = state.layers[state.layers.length - 1];
+  const pal = currentPalette();
+  state.layers.push({ color: pal[state.layers.length % pal.length], size: (last ? last.size : 20) + 24 });
+  rebuildLayerUI();
+  requestRender();
+});
+
+$('download').addEventListener('click', () => {
+  if (!state.img) return;
+  const a = document.createElement('a');
+  a.download = 'cutout-pop.png';
+  a.href = outCanvas.toDataURL('image/png');
+  a.click();
+});
+
+rebuildPaletteUI();
+rebuildLayerUI();
+</script>
+</body>
+</html>
