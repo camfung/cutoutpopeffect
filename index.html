@@ -121,6 +121,22 @@ input[type=color] {
   font-size: 11px; color: var(--muted);
 }
 .hidden { display: none !important; }
+#busy {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; background: rgba(26, 29, 26, 0.72);
+  z-index: 5; text-align: center;
+}
+#busy .spinner {
+  width: 44px; height: 44px;
+  border: 4px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+#busyText { font-size: 13px; color: var(--ink); }
+#busyText .t { color: var(--accent); font-weight: bold; }
 .checkline { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); margin: 8px 0 0; }
 .checkline input { width: auto; accent-color: var(--accent); }
 
@@ -245,9 +261,14 @@ input[type=color] {
     <select id="bgMode">
       <option value="transparent">transparent</option>
       <option value="solid">solid color</option>
+      <option value="original">original photo (outline in place)</option>
     </select>
     <div id="bgColorRow" class="row hidden" style="margin-top:8px">
       <input type="color" id="bgColor" value="#f4f1e6">
+    </div>
+    <div id="bgDimRow" class="hidden">
+      <label>Dim background <span class="val" id="bgDimVal">35</span>%</label>
+      <input type="range" id="bgDim" min="0" max="90" value="35">
     </div>
   </fieldset>
 
@@ -257,6 +278,10 @@ input[type=color] {
 <div id="main">
   <div id="drop">drop any image here — opaque backgrounds are removed for you<br><br>(or paste from clipboard, or use the file picker)</div>
   <div id="canvasWrap" class="hidden"><canvas id="out"></canvas></div>
+  <div id="busy" class="hidden">
+    <div class="spinner"></div>
+    <div id="busyText"></div>
+  </div>
   <div id="status"></div>
 </div>
 
@@ -267,6 +292,8 @@ input[type=color] {
 const state = {
   img: null,          // HTMLImageElement
   origBlob: null,     // last loaded file, for (re)running background removal
+  origImg: null,      // decoded original, drawn as backdrop in 'original' bg mode
+  bgDim: 35,
   w: 0, h: 0,         // working size (image + max outline padding)
   pad: 0,
   algo: 'edt',
@@ -358,6 +385,7 @@ async function loadFile(blob) {
   try { img = await decodeImage(blob); }
   catch (err) { $('status').textContent = String(err.message || err); return; }
   state.origBlob = blob;
+  state.origImg = img;
   $('removeBgBtn').disabled = false;
   showImage(img);
   if ($('autoRemove').checked && !hasTransparency(img)) {
@@ -368,16 +396,32 @@ async function loadFile(blob) {
 async function runRemoveBackground() {
   if (removing || !state.origBlob) return;
   removing = true;
-  $('removeBgBtn').disabled = true;
-  $('status').textContent = `removing background (${$('rbModel').value}) — can take ~15s…`;
+  const btn = $('removeBgBtn');
+  const btnText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'removing…';
+  const model = $('rbModel').value;
+  const t0 = performance.now();
+  $('busy').classList.remove('hidden');
+  const tick = () => {
+    const s = ((performance.now() - t0) / 1000).toFixed(0);
+    $('busyText').innerHTML =
+      `removing background · ${model}<br><span class="t">${s}s</span> elapsed (usually ~15s)`;
+  };
+  tick();
+  const timer = setInterval(tick, 250);
   try {
     const cut = await removeBackground(state.origBlob);
     showImage(await decodeImage(cut));
+    $('status').textContent = `background removed in ${((performance.now() - t0) / 1000).toFixed(1)}s (${model})`;
   } catch (err) {
     $('status').textContent = `background removal failed: ${err.message || err}`;
   } finally {
+    clearInterval(timer);
+    $('busy').classList.add('hidden');
     removing = false;
-    $('removeBgBtn').disabled = false;
+    btn.disabled = false;
+    btn.textContent = btnText;
   }
 }
 
@@ -769,6 +813,12 @@ function render() {
   if (state.bgMode === 'solid') {
     outCtx.fillStyle = state.bgColor;
     outCtx.fillRect(0, 0, w, h);
+  } else if (state.bgMode === 'original' && state.origImg) {
+    outCtx.drawImage(state.origImg, state.pad, state.pad, state.iw, state.ih);
+    if (state.bgDim > 0) {
+      outCtx.fillStyle = `rgba(26, 29, 26, ${state.bgDim / 100})`;
+      outCtx.fillRect(0, 0, w, h);
+    }
   }
 
   // largest layer first (drawn underneath)
@@ -1010,9 +1060,15 @@ $('simplify').addEventListener('input', e => {
 $('bgMode').addEventListener('change', e => {
   state.bgMode = e.target.value;
   $('bgColorRow').classList.toggle('hidden', state.bgMode !== 'solid');
+  $('bgDimRow').classList.toggle('hidden', state.bgMode !== 'original');
   requestRender();
 });
 $('bgColor').addEventListener('input', e => { state.bgColor = e.target.value; requestRender(); });
+$('bgDim').addEventListener('input', e => {
+  state.bgDim = +e.target.value;
+  $('bgDimVal').textContent = e.target.value;
+  requestRender();
+});
 
 $('addLayer').addEventListener('click', () => {
   const last = state.layers[state.layers.length - 1];
