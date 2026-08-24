@@ -178,6 +178,10 @@ input[type=color] {
 #cropBtns { display: flex; gap: 10px; }
 #cropBtns button { width: auto; padding: 8px 22px; }
 #cropInfo { font-size: 11px; color: var(--muted); }
+#cropRatioRow { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+#cropRatioRow select { width: auto; padding: 6px 10px; }
+#cropCustom { display: flex; align-items: center; gap: 4px; }
+#cropCustom input { width: 60px; padding: 4px 6px; }
 
 @media (max-width: 768px) {
   body { flex-direction: column; }
@@ -356,6 +360,23 @@ input[type=color] {
       </div>
     </div>
     <div id="cropInfo"></div>
+    <div id="cropRatioRow">
+      <span>aspect</span>
+      <select id="cropRatio">
+        <option value="free">free</option>
+        <option value="1:1">1:1</option>
+        <option value="4:3">4:3</option>
+        <option value="3:2">3:2</option>
+        <option value="16:9">16:9</option>
+        <option value="9:16">9:16</option>
+        <option value="4:5">4:5</option>
+        <option value="custom">custom</option>
+      </select>
+      <span id="cropCustom" class="hidden">
+        <input type="number" id="ratioW" value="1" min="0.1" step="0.1"> :
+        <input type="number" id="ratioH" value="1" min="0.1" step="0.1">
+      </span>
+    </div>
     <div id="cropBtns">
       <button class="primary" id="cropApply">apply crop</button>
       <button id="cropCancel">cancel</button>
@@ -1112,8 +1133,37 @@ function rebuildLayerUI() {
 }
 
 // ---------- crop tool ----------
-const crop = { scale: 1, rect: { x: 0, y: 0, w: 0, h: 0 }, drag: null };
+const crop = { scale: 1, rect: { x: 0, y: 0, w: 0, h: 0 }, drag: null, ratio: null };
 const MIN_CROP = 20; // px on the crop stage
+
+function currentRatio() {
+  const v = $('cropRatio').value;
+  if (v === 'free') return null;
+  if (v === 'custom') {
+    const rw = parseFloat($('ratioW').value), rh = parseFloat($('ratioH').value);
+    return (rw > 0 && rh > 0) ? rw / rh : null;
+  }
+  const [a, b] = v.split(':').map(Number);
+  return a / b;
+}
+
+// refit the current rect to crop.ratio: keep its center, stay inside the canvas
+function fitRatioRect() {
+  const R = crop.ratio;
+  if (R) {
+    const W = $('cropCanvas').width, H = $('cropCanvas').height;
+    const r = crop.rect;
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    const w = Math.min(W, H * R, Math.max(r.w, r.h * R, MIN_CROP * Math.max(1, R)));
+    const h = w / R;
+    crop.rect = {
+      x: Math.max(0, Math.min(W - w, cx - w / 2)),
+      y: Math.max(0, Math.min(H - h, cy - h / 2)),
+      w, h,
+    };
+  }
+  positionCropRect();
+}
 
 function openCrop() {
   if (!state.img) return;
@@ -1126,8 +1176,9 @@ function openCrop() {
   c.width = cw; c.height = ch;
   c.getContext('2d').drawImage(state.img, 0, 0, cw, ch);
   crop.rect = { x: 0, y: 0, w: cw, h: ch };
+  crop.ratio = currentRatio();
   $('cropOverlay').classList.remove('hidden');
-  positionCropRect();
+  fitRatioRect();
 }
 
 function positionCropRect() {
@@ -1165,6 +1216,25 @@ function cropPointerMove(e) {
     if (d.dir.includes('e')) x1 = Math.min(W, Math.max(x0 + MIN_CROP, x1 + dx));
     if (d.dir.includes('n')) y0 = Math.max(0, Math.min(y1 - MIN_CROP, y0 + dy));
     if (d.dir.includes('s')) y1 = Math.min(H, Math.max(y0 + MIN_CROP, y1 + dy));
+    const R = crop.ratio;
+    if (R) {
+      // re-impose the ratio: dragged edges stay anchored at their opposite
+      // edge, untouched axes stay centered; size capped by the room available
+      const horiz = /[ew]/.test(d.dir), vert = /[ns]/.test(d.dir);
+      const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+      const maxW = horiz ? (d.dir.includes('w') ? x1 : W - x0)
+                         : 2 * Math.min(cx, W - cx);
+      const maxH = vert ? (d.dir.includes('n') ? y1 : H - y0)
+                        : 2 * Math.min(cy, H - cy);
+      let tw = horiz && vert ? Math.max(x1 - x0, (y1 - y0) * R)
+             : horiz ? x1 - x0 : (y1 - y0) * R;
+      tw = Math.max(MIN_CROP * Math.max(1, R), Math.min(tw, maxW, maxH * R));
+      const th = tw / R;
+      if (horiz) { if (d.dir.includes('w')) x0 = x1 - tw; else x1 = x0 + tw; }
+      else { x0 = cx - tw / 2; x1 = cx + tw / 2; }
+      if (vert) { if (d.dir.includes('n')) y0 = y1 - th; else y1 = y0 + th; }
+      else { y0 = cy - th / 2; y1 = cy + th / 2; }
+    }
     x = x0; y = y0; w = x1 - x0; h = y1 - y0;
   }
   crop.rect = { x, y, w, h };
@@ -1206,6 +1276,15 @@ async function applyCrop() {
   showImage(await decodeImage(curBlob));
 }
 
+$('cropRatio').addEventListener('change', () => {
+  $('cropCustom').classList.toggle('hidden', $('cropRatio').value !== 'custom');
+  crop.ratio = currentRatio();
+  fitRatioRect();
+});
+['ratioW', 'ratioH'].forEach(id => $(id).addEventListener('input', () => {
+  crop.ratio = currentRatio();
+  fitRatioRect();
+}));
 $('cropBtn').addEventListener('click', openCrop);
 $('cropApply').addEventListener('click', applyCrop);
 $('cropCancel').addEventListener('click', () => $('cropOverlay').classList.add('hidden'));
