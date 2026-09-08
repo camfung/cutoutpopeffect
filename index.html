@@ -209,6 +209,16 @@ input[type=color] {
   input[type=color] { height: 40px; }
   #status { position: static; text-align: right; width: 100%; padding: 4px 4px 0; }
 }
+#canvasWrap { position: relative; }
+#canvasWrap.picking #out { cursor: crosshair; }
+.sam-dot {
+  position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px;
+  border-radius: 50%; border: 2px solid #1a1d1a; pointer-events: none;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55);
+}
+.sam-dot.pos { background: #4ade80; }
+.sam-dot.neg { background: #f87171; }
+#samHint { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
 </style>
 </head>
 <body>
@@ -232,7 +242,15 @@ input[type=color] {
       <option value="isnet-general-use">isnet-general-use</option>
       <option value="isnet-anime">isnet-anime</option>
       <option value="u2net">u2net</option>
+      <option value="sam">sam (click to select)</option>
     </select>
+    <div id="samOpts" class="hidden">
+      <div class="algo-desc">Click the subject to keep it. <b>Shift-click</b> anything that should be removed. The points go to Segment Anything, so the mask follows your clicks instead of guessing what is salient.</div>
+      <div id="samHint">
+        <button id="samClear">clear points</button>
+        <span class="val" id="samCount">0 points</span>
+      </div>
+    </div>
     <div class="row" style="margin-top:8px">
       <button id="removeBgBtn" disabled>remove background</button>
       <button id="cropBtn" disabled>crop</button>
@@ -432,6 +450,7 @@ const state = {
   dodgeWarm: 0,       // -40..40 temperature shift
   dodgeSat: 15,       // % chroma pushed back into lifted shadows
   dodgePreserve: true,
+  samPrompt: [],      // SAM click prompts, in ORIGINAL image pixel coords
   // layer size = thickness from the previous layer's edge (cumulative outward)
   layers: [
     { color: '#ffffff', size: 24 },
@@ -513,7 +532,21 @@ async function removeBackground(blob) {
   const model = $('rbModel').value;
   const form = new FormData();
   form.append('file', blob, 'image');
-  const res = await fetch(`/api/remove?model=${encodeURIComponent(model)}`, {
+  // rembg reads `model` from the multipart body on POST. A query-string model
+  // is accepted and then silently ignored — the call still returns 200 with a
+  // default-model mask — so it has to go in the form. `extras`, inconsistently,
+  // is only read from the query string.
+  form.append('model', model);
+  let url = `/api/remove?model=${encodeURIComponent(model)}`;
+  if (model === 'sam' && state.samPrompt.length) {
+    const sam_prompt = state.samPrompt.map(p => ({
+      type: 'point',
+      data: [Math.round(p.x), Math.round(p.y)],
+      label: p.label,
+    }));
+    url += `&extras=${encodeURIComponent(JSON.stringify({ sam_prompt }))}`;
+  }
+  const res = await fetch(url, {
     method: 'POST',
     body: form,
   });
@@ -537,6 +570,7 @@ async function loadFile(blob) {
   catch (err) { $('status').textContent = String(err.message || err); return; }
   state.origBlob = blob;
   state.origImg = img;
+  clearSam();
   $('removeBgBtn').disabled = false;
   $('cropBtn').disabled = false;
   showImage(img);
@@ -547,6 +581,10 @@ async function loadFile(blob) {
 
 async function runRemoveBackground() {
   if (removing || !state.origBlob) return;
+  if ($('rbModel').value === 'sam' && !state.samPrompt.length) {
+    $('status').textContent = 'sam needs at least one point — click the subject on the canvas first';
+    return;
+  }
   removing = true;
   const btn = $('removeBgBtn');
   const btnText = btn.textContent;
@@ -593,6 +631,50 @@ function setupWorkingSize() {
   if (w !== state.w || h !== state.h) invalidateMask();
   state.w = w;
   state.h = h;
+}
+
+// ---------- SAM point picking ----------
+// Prompts are stored in the coordinate space of state.origBlob, because that
+// is the image actually posted to rembg. The canvas is a padded, CSS-scaled
+// view of it, so both directions have to go through pad and the iw/ih scale.
+function samAddPoint(e) {
+  if ($('rbModel').value !== 'sam' || !state.img || !state.origImg) return;
+  const rect = outCanvas.getBoundingClientRect();
+  const wx = ((e.clientX - rect.left) / rect.width) * state.w - state.pad;
+  const wy = ((e.clientY - rect.top) / rect.height) * state.h - state.pad;
+  if (wx < 0 || wy < 0 || wx > state.iw || wy > state.ih) return;  // clicked the padding
+  const nw = state.origImg.naturalWidth, nh = state.origImg.naturalHeight;
+  state.samPrompt.push({
+    x: wx * nw / state.iw,
+    y: wy * nh / state.ih,
+    label: e.shiftKey ? 0 : 1,
+  });
+  renderSamDots();
+}
+
+function renderSamDots() {
+  const wrap = $('canvasWrap');
+  wrap.querySelectorAll('.sam-dot').forEach(el => el.remove());
+  const n = state.samPrompt.length;
+  $('samCount').textContent = n === 1 ? '1 point' : `${n} points`;
+  if (!state.origImg) return;
+  const nw = state.origImg.naturalWidth, nh = state.origImg.naturalHeight;
+  for (const p of state.samPrompt) {
+    const el = document.createElement('div');
+    el.className = 'sam-dot ' + (p.label ? 'pos' : 'neg');
+    // percentage offsets track the canvas however the CSS scales it
+    el.style.left = ((state.pad + p.x * state.iw / nw) / state.w * 100) + '%';
+    el.style.top = ((state.pad + p.y * state.ih / nh) / state.h * 100) + '%';
+    wrap.appendChild(el);
+  }
+}
+
+function clearSam() { state.samPrompt = []; renderSamDots(); }
+
+function syncSamUI() {
+  const on = $('rbModel').value === 'sam';
+  $('samOpts').classList.toggle('hidden', !on);
+  $('canvasWrap').classList.toggle('picking', on);
 }
 
 // ---------- subject dodge ----------
@@ -1102,6 +1184,7 @@ function render() {
   }
 
   outCtx.drawImage(dodgedImage(), state.pad, state.pad, state.iw, state.ih);
+  renderSamDots();
   $('status').textContent =
     `${state.iw}×${state.ih}px · ${state.algo} · ${(performance.now() - t0).toFixed(0)}ms`;
 }
@@ -1410,6 +1493,7 @@ async function applyCrop() {
   }
   state.origBlob = origBlob;
   state.origImg = await decodeImage(origBlob);
+  clearSam();
   $('cropOverlay').classList.add('hidden');
   showImage(await decodeImage(curBlob));
 }
@@ -1437,6 +1521,10 @@ document.querySelectorAll('.crop-handle').forEach(el => {
 // ---------- wiring ----------
 $('file').addEventListener('change', e => e.target.files[0] && loadFile(e.target.files[0]));
 $('removeBgBtn').addEventListener('click', runRemoveBackground);
+outCanvas.addEventListener('click', samAddPoint);
+$('samClear').addEventListener('click', clearSam);
+$('rbModel').addEventListener('change', syncSamUI);
+syncSamUI();
 
 const dropTargets = [document.body];
 document.body.addEventListener('dragover', e => { e.preventDefault(); $('drop').classList.add('hover'); });
