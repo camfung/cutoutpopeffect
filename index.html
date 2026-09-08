@@ -240,6 +240,27 @@ input[type=color] {
   </fieldset>
 
   <fieldset>
+    <legend>Subject dodge</legend>
+    <div class="algo-desc">Brightens the cut-out subject only, weighted toward its shadows &mdash; the fix for a back-lit shot. The cutout's own alpha is the mask, so this needs no extra pass. 0 stops = off.</div>
+    <label>Exposure lift <span class="val" id="dodgeVal">0.00</span> stops</label>
+    <input type="range" id="dodge" min="0" max="2.5" value="0" step="0.05">
+    <div id="dodgeOpts" class="hidden">
+      <label>Shadow bias <span class="val" id="dodgeShadowVal">60</span>%</label>
+      <input type="range" id="dodgeShadow" min="0" max="100" value="60">
+      <label>Feather <span class="val" id="dodgeFeatherVal">3</span>px</label>
+      <input type="range" id="dodgeFeather" min="0" max="12" value="3">
+      <label>Warmth <span class="val" id="dodgeWarmVal">0</span></label>
+      <input type="range" id="dodgeWarm" min="-40" max="40" value="0">
+      <label>Saturation recover <span class="val" id="dodgeSatVal">15</span>%</label>
+      <input type="range" id="dodgeSat" min="0" max="60" value="15">
+      <div class="checkline">
+        <input type="checkbox" id="dodgePreserve" checked>
+        <span>protect highlights (rim light)</span>
+      </div>
+    </div>
+  </fieldset>
+
+  <fieldset>
     <legend>Algorithm</legend>
     <select id="algo">
       <option value="edt">Distance field — Euclidean (round)</option>
@@ -405,6 +426,12 @@ const state = {
   roundness: 10,
   bgMode: 'transparent',
   bgColor: '#f4f1e6',
+  dodge: 0,           // exposure lift in stops; 0 disables the whole pass
+  dodgeShadow: 60,    // % bias toward shadows
+  dodgeFeather: 3,    // px blur on the dodge weight; 3 is the smallest radius with no edge overshoot
+  dodgeWarm: 0,       // -40..40 temperature shift
+  dodgeSat: 15,       // % chroma pushed back into lifted shadows
+  dodgePreserve: true,
   // layer size = thickness from the previous layer's edge (cumulative outward)
   layers: [
     { color: '#ffffff', size: 24 },
@@ -449,9 +476,10 @@ const outCanvas = $('out');
 const outCtx = outCanvas.getContext('2d');
 
 // caches, invalidated when image/threshold change
-let cache = { mask: null, dist: {}, contours: null, silhouette: null };
+let cache = { mask: null, dist: {}, contours: null, silhouette: null, dodged: null };
 
-function invalidateMask() { cache = { mask: null, dist: {}, contours: null, silhouette: null, bbox: null }; }
+function invalidateMask() { cache = { mask: null, dist: {}, contours: null, silhouette: null, bbox: null, dodged: null }; }
+function invalidateDodge() { cache.dodged = null; }
 
 // ---------- image loading ----------
 function decodeImage(blob) {
@@ -565,6 +593,116 @@ function setupWorkingSize() {
   if (w !== state.w || h !== state.h) invalidateMask();
   state.w = w;
   state.h = h;
+}
+
+// ---------- subject dodge ----------
+// A back-lit subject is dark against a bright ground. Lifting the whole frame
+// just greys the sky, so the lift is confined to the cutout and weighted by
+// how dark each pixel already is: shadows move, rim light stays put. Gain is
+// applied in linear light, otherwise a 1-stop lift reads as a wash rather
+// than as exposure.
+const SRGB2LIN = new Float32Array(256);
+for (let i = 0; i < 256; i++) {
+  const c = i / 255;
+  SRGB2LIN[i] = c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+}
+// 4096 steps is visually exact once quantised back to 8-bit
+const LIN2SRGB = new Uint8ClampedArray(4096);
+for (let i = 0; i < 4096; i++) {
+  const c = i / 4095;
+  LIN2SRGB[i] = Math.round(255 *
+    (c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055));
+}
+const lin2srgb = v => LIN2SRGB[v <= 0 ? 0 : v >= 1 ? 4095 : (v * 4095) | 0];
+
+// three box passes approximate a Gaussian closely enough for a mask edge
+function blurWeight(src, w, h, r) {
+  let a = src, b = new Float32Array(src.length);
+  for (let p = 0; p < 3; p++) { boxPass(a, b, w, h, r); const t = a; a = b; b = t; }
+  return a;
+}
+function boxPass(src, dst, w, h, r) {
+  const tmp = new Float32Array(src.length);
+  const norm = 1 / (2 * r + 1);
+  const cx = x => x < 0 ? 0 : x >= w ? w - 1 : x;
+  const cy = y => y < 0 ? 0 : y >= h ? h - 1 : y;
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    let sum = 0;
+    for (let x = -r; x <= r; x++) sum += src[row + cx(x)];
+    for (let x = 0; x < w; x++) {
+      tmp[row + x] = sum * norm;
+      sum -= src[row + cx(x - r)];
+      sum += src[row + cx(x + r + 1)];
+    }
+  }
+  for (let x = 0; x < w; x++) {
+    let sum = 0;
+    for (let y = -r; y <= r; y++) sum += tmp[cy(y) * w + x];
+    for (let y = 0; y < h; y++) {
+      dst[y * w + x] = sum * norm;
+      sum -= tmp[cy(y - r) * w + x];
+      sum += tmp[cy(y + r + 1) * w + x];
+    }
+  }
+}
+
+// returns state.img untouched when the pass is off, so the normal path costs nothing
+function dodgedImage() {
+  const iw = state.iw, ih = state.ih;
+  if (state.dodge <= 0) return state.img;
+  if (cache.dodged && cache.dodged.width === iw && cache.dodged.height === ih) {
+    return cache.dodged;
+  }
+  const c = document.createElement('canvas');
+  c.width = iw; c.height = ih;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(state.img, 0, 0, iw, ih);
+  const id = ctx.getImageData(0, 0, iw, ih);
+  const d = id.data;
+  const n = iw * ih;
+
+  let weight = new Float32Array(n);
+  for (let i = 0; i < n; i++) weight[i] = d[i * 4 + 3] / 255;
+  const r = Math.round(state.dodgeFeather);
+  if (r > 0) weight = blurWeight(weight, iw, ih, r);
+
+  const k = 0.25 + (state.dodgeShadow / 100) * 3.75;
+  const warm = state.dodgeWarm / 100;
+  const satAmt = state.dodgeSat / 100;
+  const protect = state.dodgePreserve;
+
+  // per-pixel Math.pow twice over a few Mpx is the whole cost of this pass;
+  // both curves depend only on slider state, so precompute them
+  const SW = new Float32Array(1024);
+  for (let i = 0; i < 1024; i++) SW[i] = Math.pow(1 - i / 1023, k);
+  const GAIN = new Float32Array(1024);
+  for (let i = 0; i < 1024; i++) GAIN[i] = Math.pow(2, state.dodge * (i / 1023));
+
+  for (let i = 0; i < n; i++) {
+    const p = i * 4;
+    if (d[p + 3] === 0) continue;
+    const w = weight[i];
+    if (w <= 0) continue;
+    let rr = SRGB2LIN[d[p]], gg = SRGB2LIN[d[p + 1]], bb = SRGB2LIN[d[p + 2]];
+    const lum = 0.2126 * rr + 0.7152 * gg + 0.0722 * bb;
+    const sw = protect ? SW[(lum * 1023) | 0] : 1;
+    let t = sw * w;
+    if (t > 1) t = 1;
+    const gain = GAIN[(t * 1023) | 0];
+    rr *= gain; gg *= gain; bb *= gain;
+    if (warm !== 0) { const tw = warm * w; rr *= 1 + tw; bb *= 1 - tw; }
+    if (satAmt > 0) {
+      // shadows desaturate as they darken, so a straight lift looks muddy
+      const l2 = 0.2126 * rr + 0.7152 * gg + 0.0722 * bb;
+      const sc = 1 + satAmt * t;
+      rr = l2 + (rr - l2) * sc; gg = l2 + (gg - l2) * sc; bb = l2 + (bb - l2) * sc;
+    }
+    d[p] = lin2srgb(rr); d[p + 1] = lin2srgb(gg); d[p + 2] = lin2srgb(bb);
+  }
+  ctx.putImageData(id, 0, 0);
+  cache.dodged = c;
+  return c;
 }
 
 // ---------- mask extraction ----------
@@ -963,7 +1101,7 @@ function render() {
     }
   }
 
-  outCtx.drawImage(state.img, state.pad, state.pad, state.iw, state.ih);
+  outCtx.drawImage(dodgedImage(), state.pad, state.pad, state.iw, state.ih);
   $('status').textContent =
     `${state.iw}×${state.ih}px · ${state.algo} · ${(performance.now() - t0).toFixed(0)}ms`;
 }
@@ -1348,6 +1486,28 @@ $('lineJoin').addEventListener('change', e => { state.lineJoin = e.target.value;
 $('simplify').addEventListener('input', e => {
   state.simplify = +e.target.value;
   $('simplifyVal').textContent = e.target.value;
+  requestRender();
+});
+
+$('dodge').addEventListener('input', e => {
+  state.dodge = +e.target.value;
+  $('dodgeVal').textContent = state.dodge.toFixed(2);
+  $('dodgeOpts').classList.toggle('hidden', state.dodge <= 0);
+  invalidateDodge();
+  requestRender();
+});
+[['dodgeShadow', 'dodgeShadowVal'], ['dodgeFeather', 'dodgeFeatherVal'],
+ ['dodgeWarm', 'dodgeWarmVal'], ['dodgeSat', 'dodgeSatVal']].forEach(([id, out]) => {
+  $(id).addEventListener('input', e => {
+    state[id] = +e.target.value;
+    $(out).textContent = e.target.value;
+    invalidateDodge();
+    requestRender();
+  });
+});
+$('dodgePreserve').addEventListener('change', e => {
+  state.dodgePreserve = e.target.checked;
+  invalidateDodge();
   requestRender();
 });
 
