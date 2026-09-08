@@ -1,0 +1,5 @@
+# Deploy secrets copied next to the compose file (REMOVEBG_AUTH)
+.env
+
+# Pre-deploy rollback copies
+index.html.bak-*
