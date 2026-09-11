@@ -255,6 +255,17 @@ input[type=color] {
       <button id="removeBgBtn" disabled>remove background</button>
       <button id="cropBtn" disabled>crop</button>
     </div>
+    <label>Working resolution (long side)</label>
+    <select id="maxDim">
+      <option value="800">800px</option>
+      <option value="1200">1200px</option>
+      <option value="1600" selected>1600px (default)</option>
+      <option value="2400">2400px</option>
+      <option value="3200">3200px</option>
+      <option value="4800">4800px</option>
+      <option value="0">Original (no cap)</option>
+    </select>
+    <div class="algo-desc">Higher = sharper edges, slower render/dilation. "Original" keeps full source pixel density.</div>
   </fieldset>
 
   <fieldset>
@@ -459,6 +470,7 @@ const state = {
   pattern: 'custom',  // custom | equal | growing | shrinking
   interval: 24,
   step: 12,
+  maxDim: 1600,       // working-resolution cap on the long side; 0 = original, no cap
 };
 
 // absolute outward extent per layer: running sum of thicknesses, in list order
@@ -619,8 +631,8 @@ function setupWorkingSize() {
   // pad by the total outward extent so outlines never clip
   const maxSize = Math.max(...absoluteSizes(), 8);
   state.pad = maxSize + 8;
-  // cap working resolution for distance-transform perf
-  const MAXDIM = 1600;
+  // cap working resolution for distance-transform perf (0 = no cap, use original)
+  const MAXDIM = state.maxDim || Infinity;
   let iw = state.img.naturalWidth, ih = state.img.naturalHeight;
   const scale = Math.min(1, MAXDIM / Math.max(iw, ih));
   state.iw = Math.round(iw * scale);
@@ -1520,6 +1532,15 @@ document.querySelectorAll('.crop-handle').forEach(el => {
 
 // ---------- wiring ----------
 $('file').addEventListener('change', e => e.target.files[0] && loadFile(e.target.files[0]));
+
+$('maxDim').addEventListener('change', e => {
+  state.maxDim = +e.target.value;
+  if (state.img) {
+    setupWorkingSize();
+    invalidateMask();
+    requestRender();
+  }
+});
 $('removeBgBtn').addEventListener('click', runRemoveBackground);
 outCanvas.addEventListener('click', samAddPoint);
 $('samClear').addEventListener('click', clearSam);
